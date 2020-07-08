@@ -1,0 +1,103 @@
+#!/bin/bash
+
+export AUTORITY=$1
+export SERVER=$2
+export CREATECA=$3
+export IP_OR_DNS=$4
+export ID_VALUE=$5
+export PW=$6
+
+
+if [ "$CREATECA" = true ] ; then
+
+# Create a self-signed root CA
+
+keytool -genkeypair -v \
+  -alias ca \
+  -dname "CN=$AUTORITY-CA, OU=Development, O=$AUTORITY, L=SPB, S=SPB, C=RU" \
+  -keystore ca.jks \
+  -keypass:env PW \
+  -storepass:env PW \
+  -keyalg RSA \
+  -keysize 4096 \
+  -ext KeyUsage:critical="keyCertSign" \
+  -ext BasicConstraints:critical="ca:true" \
+  -validity 9999
+
+# Export for trust stores
+
+keytool -export -v \
+  -alias ca \
+  -file ca.crt \
+  -keypass:env PW \
+  -storepass:env PW \
+  -keystore ca.jks \
+  -rfc
+
+fi
+
+# Create a server certificate
+
+keytool -genkeypair -v \
+  -alias $ID_VALUE \
+  -dname "CN=$SERVER, OU=Development, O=$SERVER, L=SPB, S=SPB, C=RU" \
+  -keystore $ID_VALUE.jks \
+  -keypass:env PW \
+  -storepass:env PW \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 385
+
+# Create a certificate signing request for this server
+
+keytool -certreq -v \
+  -alias $ID_VALUE \
+  -keypass:env PW \
+  -storepass:env PW \
+  -keystore $ID_VALUE.jks \
+  -file $ID_VALUE.csr
+
+# Sign the server certificate with the self-signed root CA
+
+keytool -gencert -v \
+  -alias ca \
+  -keypass:env PW \
+  -storepass:env PW \
+  -keystore ca.jks \
+  -infile $ID_VALUE.csr \
+  -outfile $ID_VALUE.crt \
+  -ext KeyUsage:critical="digitalSignature,keyEncipherment" \
+  -ext EKU="serverAuth" \
+  -ext SAN="$IP_OR_DNS:$ID_VALUE" \
+  -rfc
+
+# Server's JKS should trust our self-signed CA as a signer
+
+keytool -import -v \
+  -alias ca \
+  -file ca.crt \
+  -keystore $ID_VALUE.jks \
+  -storetype JKS \
+  -storepass:env PW << EOF
+yes
+EOF
+
+
+# Import the signed certificate back into the server's JKS
+
+keytool -import -v \
+  -alias $ID_VALUE \
+  -file $ID_VALUE.crt \
+  -keystore $ID_VALUE.jks \
+  -storetype JKS \
+  -storepass:env PW
+
+# Let's check if everything is OK with this certificate
+
+keytool -list -v \
+  -keystore $ID_VALUE.jks \
+  -storepass:env PW
+
+# Create a quick stable alias for sequential CI/CD
+
+cp $ID_VALUE.jks server.jks
